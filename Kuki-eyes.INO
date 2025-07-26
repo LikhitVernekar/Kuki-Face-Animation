@@ -3,7 +3,6 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 
-// Use SH1106 constructor to avoid the right-side line
 U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0);
 
 int COLOR_WHITE = 1;
@@ -14,8 +13,14 @@ const int ref_eye_width = 40;
 const int ref_space_between_eye = 10;
 const int ref_corner_radius = 10;
 
-int left_eye_x, left_eye_y;
-int right_eye_x, right_eye_y;
+const int center_left_eye_x = SCREEN_WIDTH/2 - ref_eye_width/2 - ref_space_between_eye/2;
+const int center_right_eye_x = SCREEN_WIDTH/2 + ref_eye_width/2 + ref_space_between_eye/2;
+const int center_eye_y = SCREEN_HEIGHT/2;
+
+int left_eye_x = center_left_eye_x;
+int left_eye_y = center_eye_y;
+int right_eye_x = center_right_eye_x;
+int right_eye_y = center_eye_y;
 
 void display_clearDisplay() { u8g2.clearBuffer(); }
 void display_fillRoundRect(int x,int y,int w, int h, int r, int color) {
@@ -37,11 +42,12 @@ void draw_eyes(int height) {
   display_display();
 }
 
-enum BlinkState { POWERON_HOLD, POWERON_OPENING, WAITING, CLOSING, CLOSED, OPENING };
+enum BlinkState { POWERON_HOLD, POWERON_OPENING, WAITING, CLOSING, CLOSED, OPENING, LOOK_SIDE, RETURN_CENTER };
 BlinkState blinkState = POWERON_HOLD;
 
 unsigned long lastStateChange = 0;
 unsigned long nextBlink = 0;
+unsigned long lookSideStart = 0;
 int eye_height = 6; // Start closed
 const int blink_closed_height = 6;
 const int blink_speed = 8; // pixels per frame (faster!)
@@ -49,15 +55,21 @@ const int blink_frame_delay = 5; // ms between animation frames (faster!)
 const int blink_hold_closed = 80; // ms eyes stay fully closed (shorter hold)
 const int poweron_hold_time = 3000; // 3 seconds closed at power-on
 
+// Look left/right parameters
+bool lookLeft = true;
+int look_offset_x = 18; // how far to move eyes horizontally
+int look_offset_y = 0;  // will be randomized
+const int look_side_min_time = 5000; // ms to hold look side
+
 void setup() {
   u8g2.setI2CAddress(0x78);
   u8g2.setDisplayRotation(U8G2_R0);
   u8g2.begin();
 
-  left_eye_x = SCREEN_WIDTH/2 - ref_eye_width/2 - ref_space_between_eye/2;
-  left_eye_y = SCREEN_HEIGHT/2;
-  right_eye_x = SCREEN_WIDTH/2 + ref_eye_width/2 + ref_space_between_eye/2;
-  right_eye_y = SCREEN_HEIGHT/2;
+  left_eye_x = center_left_eye_x;
+  left_eye_y = center_eye_y;
+  right_eye_x = center_right_eye_x;
+  right_eye_y = center_eye_y;
 
   draw_eyes(eye_height);
   lastStateChange = millis();
@@ -68,7 +80,6 @@ void loop() {
 
   switch (blinkState) {
     case POWERON_HOLD:
-      // Keep eyes closed for 3 seconds at power-on
       if (now - lastStateChange >= poweron_hold_time) {
         blinkState = POWERON_OPENING;
         lastStateChange = now;
@@ -89,7 +100,41 @@ void loop() {
       break;
     case WAITING:
       if (now > nextBlink) {
-        blinkState = CLOSING;
+        // Randomly decide: blink or look side
+        if (random(0, 2) == 0) {
+          blinkState = CLOSING;
+        } else {
+          // Prepare to look left or right
+          lookLeft = random(0, 2) == 0;
+          look_offset_y = random(-10, 11); // random vertical offset
+          blinkState = LOOK_SIDE;
+          lookSideStart = now;
+          // Move eyes to side instantly
+          if (lookLeft) {
+            left_eye_x = center_left_eye_x - look_offset_x;
+            right_eye_x = center_right_eye_x - look_offset_x;
+          } else {
+            left_eye_x = center_left_eye_x + look_offset_x;
+            right_eye_x = center_right_eye_x + look_offset_x;
+          }
+          left_eye_y = center_eye_y + look_offset_y;
+          right_eye_y = center_eye_y + look_offset_y;
+          draw_eyes(eye_height);
+        }
+        lastStateChange = now;
+      }
+      break;
+    case LOOK_SIDE:
+      // Hold the look for at least 5 seconds
+      if (now - lookSideStart >= look_side_min_time) {
+        // Instantly return to center
+        left_eye_x = center_left_eye_x;
+        right_eye_x = center_right_eye_x;
+        left_eye_y = center_eye_y;
+        right_eye_y = center_eye_y;
+        draw_eyes(eye_height);
+        blinkState = WAITING;
+        nextBlink = now + random(5000, 10001); // 5-10 seconds
         lastStateChange = now;
       }
       break;
